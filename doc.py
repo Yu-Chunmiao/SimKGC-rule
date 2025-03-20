@@ -178,6 +178,43 @@ def _custom_tokenize_tri(text: str):
         mask_indices = torch.cat([mask_indices,  torch.zeros(args.num_triplets-n, 2)], dim=0)
     return encoded_inputs, token_type_ids, mask_indices
 
+def find_paths(graph, start_entity, rule_func, max_depth=None):
+    """
+    查找从start_entity出发的所有符合规则的路径
+    :param graph: 邻接表表示的图
+    :param start_entity: 起始实体
+    :param rule_func: 规则函数，接受路径并返回元组（是否有效，是否允许继续扩展）
+    :param max_depth: 路径的最大深度（跳数）
+    :return: 符合规则的所有路径列表
+    """
+    paths = []
+    # 使用DFS栈，每个元素是（当前实体，当前路径）
+    stack = [(start_entity, [])]
+    while stack:
+        current_entity, current_path = stack.pop()
+        # 应用规则判断当前路径
+        is_valid, allow_extend = rule_func(current_path)
+        if is_valid:
+            paths.append(current_path.copy())
+        # 判断是否继续扩展路径
+        current_length = len(current_path)
+        if allow_extend and (max_depth is None or current_length < max_depth):
+            if current_entity in graph:
+                # 遍历所有可能的关系和尾实体
+                for rel in graph[current_entity]:
+                    for tail in graph[current_entity][rel]:
+                        new_path = current_path + [(rel, tail)]
+                        stack.append((tail, new_path))
+    return paths
+
+def sample_rule(path):
+    rels = [step[0] for step in path]
+    # 有效性：路径关系必须为[r1, r2]
+    is_valid = (len(rels) == 2) and (rels == ['r1', 'r2'])
+    # 允许扩展的条件：路径长度小于2且当前关系序列符合前缀要求
+    allow_extend = len(rels) < 2 and (len(rels) == 0 or (rels == ['r1']))
+    return (is_valid, allow_extend)
+
 
 class Example:
 
@@ -233,7 +270,7 @@ class Example:
             qr_text = '[STRUCT] ' + head_text + ' [SEP] ' + self.relation + ' [SEP]' + ' [MASK]'
             qe_encoded_inputs = head_encoded_inputs
             ae_encoded_inputs = tail_encoded_inputs
-            pathes = get_path_with_rule(self.head_id, self.relation,self.tail_id)
+            paths = find_paths(train_triplet_dict, self.head_id, self.relation, sample_rule)
             head_forward_triplets, head_backward_triplets = get_neighbor_trpilets(self.head_id, self.relation,
                                                                                   self.tail_id,
                                                                                   args.num_triplets // 2,

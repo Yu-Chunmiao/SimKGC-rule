@@ -90,9 +90,9 @@ class EntityDict:
     def __len__(self):
         return len(self.entity_exs)
 
-class Ruledict():
-    def __int__(self, rule_dict_path: str):
-        self.path = rule_dict_path
+class Ruledict:
+    def __int__(self, path: str):
+        self.path = path
         self.r2rules = dict()
         with open(self.path, 'r') as fi:
             for line in fi:

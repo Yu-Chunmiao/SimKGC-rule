@@ -10,6 +10,7 @@ import random
 
 train_triplet_dict: TripletDict = None
 all_triplet_dict: TripletDict = None
+rule_dict: Ruledict = None
 link_graph: LinkGraph = None
 entity_dict: EntityDict = None
 tokenizer: AutoTokenizer = None

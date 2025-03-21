@@ -25,7 +25,7 @@ def _init_entity_dict():
 def _init_train_triplet_dict():
     global train_triplet_dict
     if not train_triplet_dict:
-        train_triplet_dict = TripletDict(path_list=[args.train_path])
+        train_triplet_dict = TripletDict(path_list=[args.train_path], relation_path=args.relation_path)
 
 def _init_rule_dict():
     global rule_dict
@@ -57,7 +57,7 @@ def get_train_triplet_dict():
 
 def get_rule_dict():
     _init_rule_dict()
-    return train_triplet_dict
+    return rule_dict
 
 
 def get_all_triplet_dict():

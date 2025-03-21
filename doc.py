@@ -138,6 +138,22 @@ def get_triplet_seq(triplet_list: str, forward: bool):
 
     return seqs
 
+def get_path_seq(paths: str, head_entity):
+    if len(paths) > args.num_triplets:
+        paths = random.sample(paths, args.num_triplets)
+    elif len(paths)>0:
+        paths = random.choices(paths, k=args.num_triplets)
+    seqs = []
+    for path in paths:
+        seq = [head_entity]
+        for (rel, entity) in path:
+            entity = _parse_entity_name(entity_dict.get_entity_by_id(entity).entity)
+            seq.extend([rel, entity])
+        seq = ' '.join(map(str, seq))
+        seqs.append(seq)
+
+    return seqs
+
 def _custom_tokenize_tri(text: str):
     tokenizer = get_tokenizer()
     if len(text) == 0:
@@ -178,11 +194,27 @@ def _custom_tokenize_tri(text: str):
         mask_indices = torch.cat([mask_indices,  torch.zeros(args.num_triplets-n, 2)], dim=0)
     return encoded_inputs, token_type_ids, mask_indices
 
-def find_paths(graph, start_entity, rule_func, max_depth=None):
+def _custom_tokenize_path(text: str):
+    tokenizer = get_tokenizer()
+    if len(text) == 0:
+        text = ['[UNK] [UNK] [UNK]' for _ in range(args.num_triplets)]
+    if len(text) < args.num_triplets:
+        num = len(text)
+        text = text + ['[UNK] [UNK] [UNK]' for _ in range(args.num_triplets-num)]
+    encoded_inputs = tokenizer(text=text,
+                               add_special_tokens=True,
+                               max_length=args.max_num_tokens,
+                               return_tensors="pt",
+                               truncation=True,
+                               padding=True)
+    return encoded_inputs
+
+def find_paths(graph, start_entity, relation, target, rule_func, max_depth=None):
     """
     查找从start_entity出发的所有符合规则的路径
     :param graph: 邻接表表示的图
     :param start_entity: 起始实体
+    :param relation: 相关关系类型
     :param rule_func: 规则函数，接受路径并返回元组（是否有效，是否允许继续扩展）
     :param max_depth: 路径的最大深度（跳数）
     :return: 符合规则的所有路径列表
@@ -193,26 +225,31 @@ def find_paths(graph, start_entity, rule_func, max_depth=None):
     while stack:
         current_entity, current_path = stack.pop()
         # 应用规则判断当前路径
-        is_valid, allow_extend = rule_func(current_path)
+        is_valid, allow_extend = rule_func(current_path, relation)
         if is_valid:
             paths.append(current_path.copy())
         # 判断是否继续扩展路径
         current_length = len(current_path)
         if allow_extend and (max_depth is None or current_length < max_depth):
-            if current_entity in graph:
+            if current_entity in graph.h2rt:
                 # 遍历所有可能的关系和尾实体
-                for rel in graph[current_entity]:
-                    for tail in graph[current_entity][rel]:
-                        new_path = current_path + [(rel, tail)]
-                        stack.append((tail, new_path))
+                for (rel,tail) in graph.h2rt[current_entity]:
+                    if (rel, tail) == (relation, target):
+                        continue
+                    new_path = current_path + [(rel, tail)]
+                    stack.append((tail, new_path))
+
+
     return paths
 
-def sample_rule(path):
-    rels = [step[0] for step in path]
+def sample_rule(path, relation, num_maxlength=5):
+    relation_id = train_triplet_dict.r2id[relation]
+    rels = [relation_id] + [train_triplet_dict.r2id[step[0]] for step in path]
+    rules = rule_dict.r2rules[relation_id]
     # 有效性：路径关系必须为[r1, r2]
-    is_valid = (len(rels) == 2) and (rels == ['r1', 'r2'])
+    is_valid = (len(rels) < num_maxlength) and (rels in rules)
     # 允许扩展的条件：路径长度小于2且当前关系序列符合前缀要求
-    allow_extend = len(rels) < 2 and (len(rels) == 0 or (rels == ['r1']))
+    allow_extend = len(rels) < num_maxlength
     return (is_valid, allow_extend)
 
 
@@ -260,47 +297,69 @@ class Example:
         tail_text = _concat_name_desc(tail_word, tail_desc)
         tail_encoded_inputs = _custom_tokenize(text=tail_text, return_token_type_ids=False)
         tokenizer = get_tokenizer()
-        if self.forward:
-            head_encoded = tokenizer.tokenize(head_text)
-            hr_encoded = tokenizer.tokenize(head_text + self.relation)
-            if len(hr_encoded) > args.max_num_tokens - 8:
-                ent_tailored = head_encoded[:-(len(hr_encoded) - args.max_num_tokens + 8)]
-                ent_tailored_ids = tokenizer.convert_tokens_to_ids(ent_tailored)
-                head_text = tokenizer.decode(ent_tailored_ids, skip_special_tokens=False)
-            qr_text = '[STRUCT] ' + head_text + ' [SEP] ' + self.relation + ' [SEP]' + ' [MASK]'
-            qe_encoded_inputs = head_encoded_inputs
-            ae_encoded_inputs = tail_encoded_inputs
-            paths = find_paths(train_triplet_dict, self.head_id, self.relation, sample_rule)
-            head_forward_triplets, head_backward_triplets = get_neighbor_trpilets(self.head_id, self.relation,
-                                                                                  self.tail_id,
-                                                                                  args.num_triplets // 2,
-                                                                                  args.num_triplets // 2)
-            head_triplet_seqs = get_triplet_seq(head_forward_triplets, forward=True) + get_triplet_seq(
-                head_backward_triplets, forward=False)
-            h_tri_inputs, h_tri_token_type_ids, h_tri_mask_index = _custom_tokenize_tri(text=head_triplet_seqs)
-            qe_tri_inputs, qe_tri_token_type_ids, qe_tri_mask_index = h_tri_inputs, h_tri_token_type_ids, h_tri_mask_index
-
+        head_encoded = tokenizer.tokenize(head_text)
+        hr_encoded = tokenizer.tokenize(head_text + self.relation)
+        if len(hr_encoded) > args.max_num_tokens - 8:
+            ent_tailored = head_encoded[:-(len(hr_encoded) - args.max_num_tokens + 8)]
+            ent_tailored_ids = tokenizer.convert_tokens_to_ids(ent_tailored)
+            head_text = tokenizer.decode(ent_tailored_ids, skip_special_tokens=False)
+        qr_text = '[STRUCT] ' + head_text + ' [SEP] ' + self.relation + ' [SEP]' + ' [MASK]'
+        qe_encoded_inputs = head_encoded_inputs
+        ae_encoded_inputs = tail_encoded_inputs
+        paths = find_paths(train_triplet_dict, self.head_id, self.relation, self.tail_id, sample_rule)
+        if len(paths)==0:
+            rule_path = 0
         else:
-            tail_encoded = tokenizer.tokenize(tail_text)
-            rt_encoded = tokenizer.tokenize(tail_text + self.relation)
-            if len(rt_encoded) > args.max_num_tokens - 8:
-                ent_tailored = tail_encoded[:-(len(rt_encoded) - args.max_num_tokens + 8)]
-                ent_tailored_ids = tokenizer.convert_tokens_to_ids(ent_tailored)
-                tail_text = tokenizer.decode(ent_tailored_ids, skip_special_tokens=False)
-            qr_text = '[MASK_h]' + ' [SEP] ' + self.relation + ' [SEP] [STRUCT] ' +  tail_text
-
-            qe_encoded_inputs = tail_encoded_inputs
-            ae_encoded_inputs = head_encoded_inputs
-            tail_forward_triplets, tail_backward_triplets = get_neighbor_trpilets(self.tail_id, self.relation,
-                                                                                  self.head_id,
-                                                                                  args.num_triplets // 2,
-                                                                                  args.num_triplets // 2)
-
-            tail_triplet_seqs = get_triplet_seq(tail_forward_triplets, forward=True) + get_triplet_seq(
-                tail_backward_triplets, forward=False)
-
-            t_tri_inputs, t_tri_token_type_ids, t_tri_mask_index = _custom_tokenize_tri(text=tail_triplet_seqs)
-            qe_tri_inputs, qe_tri_token_type_ids, qe_tri_mask_index = t_tri_inputs, t_tri_token_type_ids, t_tri_mask_index
+            rule_path = 1
+        path_seqs = get_path_seq(paths, self.head)
+        path_inputs = _custom_tokenize_path(text=path_seqs)
+        # if self.forward:
+        #     head_encoded = tokenizer.tokenize(head_text)
+        #     hr_encoded = tokenizer.tokenize(head_text + self.relation)
+        #     if len(hr_encoded) > args.max_num_tokens - 8:
+        #         ent_tailored = head_encoded[:-(len(hr_encoded) - args.max_num_tokens + 8)]
+        #         ent_tailored_ids = tokenizer.convert_tokens_to_ids(ent_tailored)
+        #         head_text = tokenizer.decode(ent_tailored_ids, skip_special_tokens=False)
+        #     qr_text = '[STRUCT] ' + head_text + ' [SEP] ' + self.relation + ' [SEP]' + ' [MASK]'
+        #     qe_encoded_inputs = head_encoded_inputs
+        #     ae_encoded_inputs = tail_encoded_inputs
+        #     paths = find_paths(train_triplet_dict, self.head_id, self.relation, self.tail_id, sample_rule)
+        #     if len(paths)> args.num_triplets:
+        #         paths = random.sample(paths, args.num_triplets)
+        #     else:
+        #         paths = random.choices(paths, args.num_triplets)
+        #     path_seqs = get_path_seq(paths, self.head)
+        #     path_inputs = _custom_tokenize_path(text=path_seqs)
+        #     # head_forward_triplets, head_backward_triplets = get_neighbor_trpilets(self.head_id, self.relation,
+        #     #                                                                       self.tail_id,
+        #     #                                                                       args.num_triplets // 2,
+        #     #                                                                       args.num_triplets // 2)
+        #     # head_triplet_seqs = get_triplet_seq(head_forward_triplets, forward=True) + get_triplet_seq(
+        #     #     head_backward_triplets, forward=False)
+        #     # h_tri_inputs, h_tri_token_type_ids, h_tri_mask_index = _custom_tokenize_tri(text=head_triplet_seqs)
+        #     # qe_tri_inputs, qe_tri_token_type_ids, qe_tri_mask_index = h_tri_inputs, h_tri_token_type_ids, h_tri_mask_index
+        #
+        # else:
+        #     tail_encoded = tokenizer.tokenize(tail_text)
+        #     rt_encoded = tokenizer.tokenize(tail_text + self.relation)
+        #     if len(rt_encoded) > args.max_num_tokens - 8:
+        #         ent_tailored = tail_encoded[:-(len(rt_encoded) - args.max_num_tokens + 8)]
+        #         ent_tailored_ids = tokenizer.convert_tokens_to_ids(ent_tailored)
+        #         tail_text = tokenizer.decode(ent_tailored_ids, skip_special_tokens=False)
+        #     qr_text = '[MASK_h]' + ' [SEP] ' + self.relation + ' [SEP] [STRUCT] ' +  tail_text
+        #
+        #     qe_encoded_inputs = tail_encoded_inputs
+        #     ae_encoded_inputs = head_encoded_inputs
+        #     tail_forward_triplets, tail_backward_triplets = get_neighbor_trpilets(self.tail_id, self.relation,
+        #                                                                           self.head_id,
+        #                                                                           args.num_triplets // 2,
+        #                                                                           args.num_triplets // 2)
+        #
+        #     tail_triplet_seqs = get_triplet_seq(tail_forward_triplets, forward=True) + get_triplet_seq(
+        #         tail_backward_triplets, forward=False)
+        #
+        #     t_tri_inputs, t_tri_token_type_ids, t_tri_mask_index = _custom_tokenize_tri(text=tail_triplet_seqs)
+        #     qe_tri_inputs, qe_tri_token_type_ids, qe_tri_mask_index = t_tri_inputs, t_tri_token_type_ids, t_tri_mask_index
 
         qr_encoded_inputs, qr_token_type_ids, qr_mask_index, qr_struct_index= _custom_tokenize(text=qr_text, return_token_type_ids=True)
         if qr_mask_index.numel() == 0:
@@ -316,9 +375,9 @@ class Example:
                 'ae_token_type_ids': ae_encoded_inputs[0]['token_type_ids'],
                 'qe_token_ids': qe_encoded_inputs[0]['input_ids'],
                 'qe_token_type_ids': qe_encoded_inputs[0]['token_type_ids'],
-                'qe_tri_inputs': qe_tri_inputs['input_ids'],
-                'qe_tri_token_type_ids': qe_tri_token_type_ids,
-                'qe_tri_mask_index': qe_tri_mask_index,
+                'path_inputs': path_inputs['input_ids'],
+                'path_token_type_ids': path_inputs['token_type_ids'],
+                'rule_path': rule_path,
                 'obj': self}
 
 
@@ -342,6 +401,7 @@ class Dataset(torch.utils.data.dataset.Dataset):
         return len(self.examples)
 
     def __getitem__(self, index):
+        # return self.examples[index]
         return self.examples[index].vectorize()
 
 
@@ -378,9 +438,9 @@ def collate(batch_data: List[dict]) -> dict:
     qr_token_type_ids = to_indices_and_mask(
         [torch.LongTensor(ex['qr_token_type_ids']) for ex in batch_data],
         need_mask=False)
-    for ex in batch_data:
-        if ex['qr_mask_index'].numel() != 1:
-            print(ex['qr_mask_index'])
+    # for ex in batch_data:
+    #     if ex['qr_mask_index'].numel() != 1:
+    #         print(ex['qr_mask_index'])
     qr_mask_index = torch.LongTensor(
         [int(ex['qr_mask_index']) for ex in batch_data])
     qr_struct_index = torch.LongTensor(
@@ -400,20 +460,17 @@ def collate(batch_data: List[dict]) -> dict:
         [torch.LongTensor(ex['qe_token_type_ids'][0]) for ex in batch_data],
         need_mask=False)
 
-    qe_tri_ids, qe_tri_mask = to_indices_and_mask_tri(
-        [torch.LongTensor(ex['qe_tri_inputs']) for ex in batch_data],
+    path_ids, path_mask = to_indices_and_mask_tri(
+        [torch.LongTensor(ex['path_inputs']) for ex in batch_data],
         pad_token_id=get_tokenizer().pad_token_id)
-    qe_tri_token_type_ids = to_indices_and_mask_tri(
-        [torch.LongTensor(ex['qe_tri_token_type_ids']) for ex in batch_data],
+    path_token_type_ids = to_indices_and_mask_tri(
+        [torch.LongTensor(ex['path_token_type_ids']) for ex in batch_data],
         need_mask=False)
-    qe_tri_mask_index = torch.cat(
-        [ex['qe_tri_mask_index'][:,1] for ex in batch_data])
 
-    qe_tri_ids = qe_tri_ids.view(ae_token_ids.size(0), -1, qe_tri_ids.size(1))
-    qe_tri_mask = qe_tri_mask.view(ae_token_ids.size(0), -1, qe_tri_mask.size(1))
-    qe_tri_token_type_ids = qe_tri_token_type_ids.view(ae_token_ids.size(0), -1, qe_tri_token_type_ids.size(1))
-    qe_tri_mask_index = qe_tri_mask_index.view(ae_token_ids.size(0), -1)
-
+    path_ids = path_ids.view(ae_token_ids.size(0), -1, path_ids.size(1))
+    path_mask = path_mask.view(ae_token_ids.size(0), -1, path_mask.size(1))
+    path_token_type_ids = path_token_type_ids.view(ae_token_ids.size(0), -1, path_token_type_ids.size(1))
+    rule_path = torch.LongTensor([ex['rule_path'] for ex in batch_data])
 
 
     batch_exs = [ex['obj'] for ex in batch_data]
@@ -429,10 +486,10 @@ def collate(batch_data: List[dict]) -> dict:
         'qe_token_ids': qe_token_ids,
         'qe_mask': qe_mask,
         'qe_token_type_ids': qe_token_type_ids,
-        'qe_tri_ids': qe_tri_ids,
-        'qe_tri_mask': qe_tri_mask,
-        'qe_tri_token_type_ids': qe_tri_token_type_ids,
-        'qe_tri_mask_index': qe_tri_mask_index,
+        'path_ids': path_ids,
+        'path_mask': path_mask,
+        'path_token_type_ids': path_token_type_ids,
+        'rule_path': rule_path,
         'batch_data': batch_exs,
         'triplet_mask': construct_mask(row_exs=batch_exs) if not args.is_test else None,
         'self_negative_mask': construct_self_negative_mask(batch_exs) if not args.is_test else None,

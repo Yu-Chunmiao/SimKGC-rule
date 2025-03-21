@@ -116,7 +116,7 @@ class CustomBertModel(nn.Module, ABC):
     def forward(self, qr_token_ids, qr_mask, qr_token_type_ids, qr_mask_index, qr_struct_index,
                 ae_token_ids, ae_mask, ae_token_type_ids,
                 qe_token_ids, qe_mask, qe_token_type_ids,
-                qe_tri_ids, qe_tri_token_type_ids, qe_tri_mask, qe_tri_mask_index,
+                path_ids, path_token_type_ids, path_mask, rule_path,
                 only_ent_embedding=False, **kwargs) -> dict:
         if only_ent_embedding:
             return self.predict_ent_embedding(tail_token_ids=ae_token_ids,
@@ -128,29 +128,26 @@ class CustomBertModel(nn.Module, ABC):
                                    mask=qr_mask,
                                    token_type_ids=qr_token_type_ids,
                                    mask_index=qr_mask_index,)
-        qe_tri_ids = qe_tri_ids.view(-1, qe_tri_ids.size(-1))
-        qe_tri_mask = qe_tri_mask.view(-1, qe_tri_mask.size(-1))
-        qe_tri_token_type_ids = qe_tri_token_type_ids.view(-1, qe_tri_token_type_ids.size(-1))
-        qe_tri_mask_index = qe_tri_mask_index.view(-1)
-        qe_tri_vector = self._encode(self.tail_bert,
-                                     token_ids=qe_tri_ids,
-                                     mask=qe_tri_mask,
-                                     token_type_ids=qe_tri_token_type_ids,
-                                     mask_index=qe_tri_mask_index)
-        qe_tri_vector = qe_tri_vector.view(qe_token_ids.size(0), -1, qe_tri_vector.size(1))
-        qe_tri_mask_index = qe_tri_mask_index.view(qe_token_ids.size(0), -1, 1)
-        qe_tri_mask_index = (qe_tri_mask_index != 0).int()
-        qe_masked = qe_tri_vector * qe_tri_mask_index
-        qe_tri_masked_mean = aggregate_neighbors_with_attention(q_vector, qe_masked)
+        path_ids = path_ids.view(-1, path_ids.size(-1))
+        path_mask = path_mask.view(-1, path_mask.size(-1))
+        path_token_type_ids = path_token_type_ids.view(-1, path_token_type_ids.size(-1))
+        path_vector = self._encode(self.tail_bert,
+                                     token_ids=path_ids,
+                                     mask=path_mask,
+                                     token_type_ids=path_token_type_ids)
+        path_vector = path_vector.view(qe_token_ids.size(0), -1, path_vector.size(1))
+        path_vector = path_vector * rule_path.view(rule_path.size(0), 1, 1)
+        path_mean = aggregate_neighbors_with_attention(q_vector, path_vector)
+        qr_vector = q_vector + path_mean
         # qe_tri_masked_mean = self.struct_MLP(qe_tri_masked_mean)
         # qe_tri_masked_mean = nn.functional.normalize(qe_tri_masked_mean, dim=1)
-        qr_vector = self._encode(self.hr_bert,
-                                 token_ids=qr_token_ids,
-                                 mask=qr_mask,
-                                 token_type_ids=qr_token_type_ids,
-                                 mask_index=qr_mask_index,
-                                 struct_vector=qe_tri_masked_mean,
-                                 struct_index=qr_struct_index)
+        # qr_vector = self._encode(self.hr_bert,
+        #                          token_ids=qr_token_ids,
+        #                          mask=qr_mask,
+        #                          token_type_ids=qr_token_type_ids,
+        #                          mask_index=qr_mask_index,
+        #                          struct_vector=path_mean,
+        #                          struct_index=qr_struct_index)
 
         qe_vector = self._encode(self.tail_bert,
                                  token_ids=qe_token_ids,

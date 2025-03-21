@@ -7,10 +7,12 @@ import torch.nn as nn
 import torch.utils.data
 
 from typing import Dict
+
+import tqdm
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from transformers import AdamW
 
-from doc import Dataset, collate
+from doc import Dataset, collate, find_paths, train_triplet_dict, sample_rule
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj
 from metric import accuracy
@@ -50,6 +52,14 @@ class Trainer:
         report_num_trainable_parameters(self.model)
 
         train_dataset = Dataset(path=args.train_path, task=args.task)
+        # num_no_rule_paths = 0
+        # for i in tqdm.tqdm(range(len(train_dataset))):
+        #     example = train_dataset[i]
+        #     paths = find_paths(train_triplet_dict, example.head_id, example.relation, example.tail_id, sample_rule)
+        #     if len(paths) == 0:
+        #         num_no_rule_paths += 1
+        # print(num_no_rule_paths, 'triplets have no rule path in', len(train_dataset), 'triplets')
+
         # x = train_dataset[0]
         valid_dataset = Dataset(path=args.valid_path, task=args.task) if args.valid_path else None
         num_training_steps = args.epochs * len(train_dataset) // max(args.batch_size, 1)

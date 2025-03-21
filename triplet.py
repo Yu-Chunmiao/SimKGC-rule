@@ -17,7 +17,7 @@ class EntityExample:
 
 class TripletDict:
 
-    def __init__(self, path_list: List[str]):
+    def __init__(self, path_list: List[str], relation_path):
         self.path_list = path_list
         logger.info('Triplets path: {}'.format(self.path_list))
         self.relations = set()
@@ -26,7 +26,16 @@ class TripletDict:
         self.h2rt = {}
         self.t2hr = {}
         self.triplet_cnt = 0
-
+        self.r2id = {}
+        with open(relation_path, 'r') as fi:
+            lines = fi.readlines()
+            num_relation = len(lines)
+            for line in lines:
+                relation = line.strip().split()
+                idx = int(relation[0])
+                relation = relation[1].replace('_', ' ').strip()
+                self.r2id[relation] = idx
+                self.r2id['inv_' + relation] = idx + num_relation
         for path in self.path_list:
             self._load(path)
         logger.info('Triplet statistics: {} relations, {} triplets'.format(len(self.relations), self.triplet_cnt))
@@ -35,14 +44,24 @@ class TripletDict:
         examples = json.load(open(path, 'r', encoding='utf-8'))
         for ex in examples:
             self.relations.add(ex['relation'])
+            inv_r = 'inv_' + ex['relation']
+            self.relations.add(inv_r)
             hr_key = (ex['head_id'], ex['relation'])
+            hr_key2 = (ex['tail_id'], inv_r)
             rt_key = (ex['relation'], ex['tail_id'])
+            rt_key2 = (inv_r, ex['head_id'])
             if hr_key not in self.hr2tails:
                 self.hr2tails[hr_key] = set()
             self.hr2tails[hr_key].add(ex['tail_id'])
+            if hr_key2 not in self.hr2tails:
+                self.hr2tails[hr_key2] = set()
+            self.hr2tails[hr_key2].add(ex['head_id'])
             if rt_key not in self.rt2heads:
                 self.rt2heads[rt_key] = set()
             self.rt2heads[rt_key].add(ex['head_id'])
+            if rt_key2 not in self.rt2heads:
+                self.rt2heads[rt_key2] = set()
+            self.rt2heads[rt_key2].add(ex['tail_id'])
             if ex['head_id'] not in self.h2rt:
                 self.h2rt[ex['head_id']] = set()
             self.h2rt[ex['head_id']].add((ex['relation'], ex['tail_id']))
@@ -91,7 +110,7 @@ class EntityDict:
         return len(self.entity_exs)
 
 class Ruledict:
-    def __int__(self, path: str):
+    def __init__(self, path: str):
         self.path = path
         self.r2rules = dict()
         with open(self.path, 'r') as fi:
@@ -100,8 +119,12 @@ class Ruledict:
                 if len(rule) <= 1:
                     continue
                 rule = [int(_) for _ in rule]
-                relation = rule[1]
-                self.r2rules[relation].append(rule)
+                relation = rule[0]
+                if relation not in self.r2rules:
+                    self.r2rules[relation] = []
+                    self.r2rules[relation].append(rule)
+                else:
+                    self.r2rules[relation].append(rule)
 
 
 

@@ -82,7 +82,7 @@ class BertPredictor:
         examples = []
         for entity_ex in entity_exs:
             examples.append(Example(head_id='', relation='',
-                                    tail_id=entity_ex.entity_id, forward=True))
+                                    tail_id=entity_ex.entity_id, forward=True, only_entity=True))
         data_loader = torch.utils.data.DataLoader(
             Dataset(path='', examples=examples, task=args.task),
             num_workers=2,

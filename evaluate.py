@@ -38,7 +38,6 @@ class PredInfo:
     pred_score: float
     topk_score_info: str
     rank: int
-    n_hop: int
     forward: bool
     correct: bool
 
@@ -156,11 +155,11 @@ def eval_single_direction(predictor: BertPredictor,
                           batch_size=256) -> dict:
     start_time = time()
     examples = load_data(args.valid_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
-    train_examples = load_data(args.train_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
-    G = nx.Graph()
-    for example in train_examples:
-        h, r, t = example.head_id, example.relation, example.tail_id
-        G.add_edge(h, t)
+    # train_examples = load_data(args.train_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+    # G = nx.Graph()
+    # for example in train_examples:
+    #     h, r, t = example.head_id, example.relation, example.tail_id
+    #     G.add_edge(h, t)
     qr_tensor, _ = predictor.predict_by_examples(examples)
     qr_tensor = qr_tensor.to(entity_tensor.device)
     target = [entity_dict.entity_to_idx(ex.tail_id) if ex.forward == True else entity_dict.entity_to_idx(ex.head_id) for ex in examples]
@@ -172,7 +171,7 @@ def eval_single_direction(predictor: BertPredictor,
     eval_dir = 'forward' if eval_forward else 'backward'
     logger.info('{} metrics: {}'.format(eval_dir, json.dumps(metrics)))
 
-    n_hop = []
+    # n_hop = []
     pred_infos = []
     for idx, ex in enumerate(examples):
         cur_topk_scores = topk_scores[idx]
@@ -180,63 +179,70 @@ def eval_single_direction(predictor: BertPredictor,
         pred_idx = cur_topk_indices[0]
         cur_score_info = {entity_dict.get_entity_by_idx(topk_idx).entity: round(topk_score, 3)
                           for topk_score, topk_idx in zip(cur_topk_scores, cur_topk_indices)}
-        try:
-            dist = nx.shortest_path_length(G, source=ex.head_id, target=ex.tail_id)  # caculate the shortest path between head and tail
-        except Exception:
-            dist = 13
-        n_hop.append(dist)
+        # try:
+        #     dist = nx.shortest_path_length(G, source=ex.head_id, target=ex.tail_id)  # caculate the shortest path between head and tail
+        # except Exception:
+        #     dist = 13
+        # n_hop.append(dist)
+        # pred_info = PredInfo(head=ex.head, relation=ex.relation,
+        #                      tail=ex.tail, pred_entity=entity_dict.get_entity_by_idx(pred_idx).entity,
+        #                      pred_score=round(cur_topk_scores[0], 4),
+        #                      topk_score_info=json.dumps(cur_score_info),
+        #                      rank=ranks[idx],
+        #                      n_hop=dist,
+        #                      correct=pred_idx == target[idx],
+        #                      forward=eval_forward)
         pred_info = PredInfo(head=ex.head, relation=ex.relation,
                              tail=ex.tail, pred_entity=entity_dict.get_entity_by_idx(pred_idx).entity,
                              pred_score=round(cur_topk_scores[0], 4),
                              topk_score_info=json.dumps(cur_score_info),
                              rank=ranks[idx],
-                             n_hop=dist,
                              correct=pred_idx == target[idx],
                              forward=eval_forward)
         pred_infos.append(pred_info)
-    ranks_by_n_hop = dict()
-    for i, dist in enumerate(n_hop):
-        if dist not in ranks_by_n_hop:
-            ranks_by_n_hop[dist] = []
-            ranks_by_n_hop[dist].append(ranks[i])
-        else:
-            ranks_by_n_hop[dist].append(ranks[i])
-    mrr_by_n_hop = dict()
-    number_by_n_hop = dict()
-    for dist in ranks_by_n_hop.keys():
-        mrr_by_n_hop[dist] = 1 / np.array(ranks_by_n_hop[dist])
-        mrr_by_n_hop[dist] = mrr_by_n_hop[dist].mean()
-        number_by_n_hop[dist] = len(ranks_by_n_hop[dist])
-
-    hops = list(ranks_by_n_hop.keys())
-    hops.sort()
-    # hops = hops[:6]
-    mrrs = [mrr_by_n_hop[dist] for dist in hops]
-    numbers = [number_by_n_hop[dist] for dist in hops]
-    print('mrrs_by_n_hop:', mrrs)
-    print('number_by_n_hop:', numbers)
-    print('hops:', hops)
-    fig, ax1 = plt.subplots()
-    ax1.plot(hops, mrrs, marker='o', color='gray')
-    ax1.set_xlabel('Hops')
-    ax1.set_ylabel('MRR')
-    ax1.set_xticks(np.linspace(1, len(hops), num=len(hops)))  # 生成1到12的均匀刻度
-    ax1.set_xticks(hops)  # 直接使用你指定的刻度值
-    ax1.set_xticklabels([str(i) for i in hops])
-    if eval_forward:
-        title = 'Predicting_Tail_2'
-
-    else:
-        title = 'Predicting_Head_2'
-    plt.title(title)
-
-    ax2 = ax1.twinx()
-    ax2.bar(hops, numbers, alpha=0.3, color='lightgray')
-    ax2.set_ylabel('#Examples')
-    ax1.set_xticks(np.linspace(min(hops), max(hops), num=len(hops)))  # 创建均匀间隔的刻度
-    ax1.set_xticklabels([str(i) for i in range(1, len(hops) + 1)])
-    plt.savefig('figure/MRR_by_hops_{}.png'.format(title))
-    plt.show()
+    # ranks_by_n_hop = dict()
+    # for i, dist in enumerate(n_hop):
+    #     if dist not in ranks_by_n_hop:
+    #         ranks_by_n_hop[dist] = []
+    #         ranks_by_n_hop[dist].append(ranks[i])
+    #     else:
+    #         ranks_by_n_hop[dist].append(ranks[i])
+    # mrr_by_n_hop = dict()
+    # number_by_n_hop = dict()
+    # for dist in ranks_by_n_hop.keys():
+    #     mrr_by_n_hop[dist] = 1 / np.array(ranks_by_n_hop[dist])
+    #     mrr_by_n_hop[dist] = mrr_by_n_hop[dist].mean()
+    #     number_by_n_hop[dist] = len(ranks_by_n_hop[dist])
+    #
+    # hops = list(ranks_by_n_hop.keys())
+    # hops.sort()
+    # # hops = hops[:6]
+    # mrrs = [mrr_by_n_hop[dist] for dist in hops]
+    # numbers = [number_by_n_hop[dist] for dist in hops]
+    # print('mrrs_by_n_hop:', mrrs)
+    # print('number_by_n_hop:', numbers)
+    # print('hops:', hops)
+    # fig, ax1 = plt.subplots()
+    # ax1.plot(hops, mrrs, marker='o', color='gray')
+    # ax1.set_xlabel('Hops')
+    # ax1.set_ylabel('MRR')
+    # ax1.set_xticks(np.linspace(1, len(hops), num=len(hops)))  # 生成1到12的均匀刻度
+    # ax1.set_xticks(hops)  # 直接使用你指定的刻度值
+    # ax1.set_xticklabels([str(i) for i in hops])
+    # if eval_forward:
+    #     title = 'Predicting_Tail_2'
+    #
+    # else:
+    #     title = 'Predicting_Head_2'
+    # plt.title(title)
+    #
+    # ax2 = ax1.twinx()
+    # ax2.bar(hops, numbers, alpha=0.3, color='lightgray')
+    # ax2.set_ylabel('#Examples')
+    # ax1.set_xticks(np.linspace(min(hops), max(hops), num=len(hops)))  # 创建均匀间隔的刻度
+    # ax1.set_xticklabels([str(i) for i in range(1, len(hops) + 1)])
+    # plt.savefig('figure/MRR_by_hops_{}.png'.format(title))
+    # plt.show()
     prefix, basename = os.path.dirname(args.eval_model_path), os.path.basename(args.eval_model_path)
     split = os.path.basename(args.valid_path)
     with open('{}/eval_{}_{}_{}.json'.format(prefix, split, eval_dir, basename), 'w', encoding='utf-8') as writer:

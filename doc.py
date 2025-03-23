@@ -255,11 +255,12 @@ def sample_rule(path, relation, num_maxlength=5):
 
 class Example:
 
-    def __init__(self, head_id, relation, tail_id, forward, **kwargs):
+    def __init__(self, head_id, relation, tail_id, forward, only_entity=False, **kwargs):
         self.head_id = head_id
         self.tail_id = tail_id
         self.relation = relation
         self.forward = forward
+        self.only_entity = only_entity
 
     @property
     def head_desc(self):
@@ -306,7 +307,10 @@ class Example:
         qr_text = '[STRUCT] ' + head_text + ' [SEP] ' + self.relation + ' [SEP]' + ' [MASK]'
         qe_encoded_inputs = head_encoded_inputs
         ae_encoded_inputs = tail_encoded_inputs
-        paths = find_paths(train_triplet_dict, self.head_id, self.relation, self.tail_id, sample_rule)
+        if not self.only_entity:
+            paths = find_paths(train_triplet_dict, self.head_id, self.relation, self.tail_id, sample_rule)
+        else:
+            paths = []
         if len(paths)==0:
             rule_path = 0
         else:

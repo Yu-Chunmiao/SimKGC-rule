@@ -14,6 +14,7 @@ import random
 entity_dict = get_entity_dict()
 train_triplet_dict = get_train_triplet_dict()
 rule_dict = get_rule_dict()
+
 if args.use_link_graph:
     # make the lazy data loading happen
     get_link_graph()
@@ -242,10 +243,13 @@ def find_paths(graph, start_entity, relation, target, rule_func, max_depth=None)
 
     return paths
 
-def sample_rule(path, relation, num_maxlength=5):
+def sample_rule(path, relation, num_maxlength=3):
     relation_id = train_triplet_dict.r2id[relation]
     rels = [relation_id] + [train_triplet_dict.r2id[step[0]] for step in path]
-    rules = rule_dict.r2rules[relation_id]
+    if relation_id in rule_dict.r2rules:
+        rules = rule_dict.r2rules[relation_id]
+    else:
+        rules = []
     # 有效性：路径关系必须为[r1, r2]
     is_valid = (len(rels) < num_maxlength) and (rels in rules)
     # 允许扩展的条件：路径长度小于2且当前关系序列符合前缀要求

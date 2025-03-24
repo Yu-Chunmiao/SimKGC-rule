@@ -7,6 +7,17 @@ from collections import deque
 
 from logger_config import logger
 
+def _normalize_fb15k237_relation(relation: str) -> str:
+    tokens = relation.replace('./', '/').replace('_', ' ').strip().split('/')
+    dedup_tokens = []
+    for token in tokens:
+        if token not in dedup_tokens[-3:]:
+            dedup_tokens.append(token)
+    # leaf words are more important (maybe)
+    relation_tokens = dedup_tokens[::-1]
+    relation = ' '.join([t for idx, t in enumerate(relation_tokens)
+                         if idx == 0 or relation_tokens[idx] != relation_tokens[idx - 1]])
+    return relation
 
 @dataclass
 class EntityExample:
@@ -17,7 +28,7 @@ class EntityExample:
 
 class TripletDict:
 
-    def __init__(self, path_list: List[str], relation_path):
+    def __init__(self, path_list: List[str], relation_path, task):
         self.path_list = path_list
         logger.info('Triplets path: {}'.format(self.path_list))
         self.relations = set()
@@ -33,7 +44,10 @@ class TripletDict:
             for line in lines:
                 relation = line.strip().split()
                 idx = int(relation[0])
-                relation = relation[1].replace('_', ' ').strip()
+                if task == 'WN18RR':
+                    relation = relation[1].replace('_', ' ').strip()
+                elif task == 'FB15k237':
+                    relation = _normalize_fb15k237_relation(relation[1])
                 self.r2id[relation] = idx
                 self.r2id['inv_' + relation] = idx + num_relation
         for path in self.path_list:

@@ -25,7 +25,7 @@ def _init_entity_dict():
 def _init_train_triplet_dict():
     global train_triplet_dict
     if not train_triplet_dict:
-        train_triplet_dict = TripletDict(path_list=[args.train_path], relation_path=args.relation_path)
+        train_triplet_dict = TripletDict(path_list=[args.train_path], relation_path=args.relation_path, task=args.task)
 
 def _init_rule_dict():
     global rule_dict
@@ -37,7 +37,7 @@ def _init_all_triplet_dict():
     global all_triplet_dict
     if not all_triplet_dict:
         path_pattern = '{}/*.txt.json'.format(os.path.dirname(args.train_path))
-        all_triplet_dict = TripletDict(path_list=glob.glob(path_pattern), relation_path=args.relation_path)
+        all_triplet_dict = TripletDict(path_list=glob.glob(path_pattern), relation_path=args.relation_path, task=args.task)
 
 
 def _init_link_graph():
